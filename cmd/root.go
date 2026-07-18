@@ -160,6 +160,27 @@ func handlerRegister(s *State, cmd Command) error {
 }
 
 func handlerUsers(s *State, cmd Command) error {
+	ctx := context.Background()
+	users, err := s.db.GetUsers(ctx)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to retrieve users: %v", err)
+		return errMsg
+	}
+
+	cfg, err := getConfig()
+	if err != nil {
+		errMsg := fmt.Errorf("failed to get ~/.gatorconfig: %v", err)
+		return errMsg
+	}
+
+	for _, user := range users {
+		s := fmt.Sprintf("- %s", user)
+		if cfg.UserName == user {
+			s += " (current)"
+		}
+		fmt.Println(s)
+	}
+
 	return nil
 }
 
