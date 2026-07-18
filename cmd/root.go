@@ -64,6 +64,14 @@ func getConfig() (config.Config, error) {
 }
 
 func handlerReset(s *State, cmd Command) error {
+	ctx := context.Background()
+	err := s.db.ResetUsers(ctx)
+	if err != nil {
+		errMsg := errors.New("failed to reset table 'users'")
+		return errMsg
+	}
+
+	fmt.Println("table 'users' has been reset")
 	return nil
 }
 
@@ -157,6 +165,7 @@ func handlerUsers(s *State, cmd Command) error {
 
 func InitCmds() (commands, error) {
 	cmds := NewCommands()
+	cmds.register("reset", handlerReset)
 	cmds.register("login", handlerLogin)
 	cmds.register("register", handlerRegister)
 	cmds.register("users", handlerUsers)

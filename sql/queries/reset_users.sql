@@ -1,3 +1,3 @@
 -- queries.sql
--- name: ResetUsers :one
+-- name: ResetUsers :exec
 DELETE FROM users;
