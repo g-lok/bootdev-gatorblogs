@@ -197,7 +197,7 @@ func handlerAgg(s *State, cmd Command) error {
 	return nil
 }
 
-func handleAddFeed(s *State, cmd Command) error {
+func handlerAddFeed(s *State, cmd Command) error {
 	ctx := context.Background()
 
 	if len(cmd.args) != 2 {
@@ -241,6 +241,22 @@ func handleAddFeed(s *State, cmd Command) error {
 	return nil
 }
 
+func handlerFeeds(s *State, cmd Command) error {
+	ctx := context.Background()
+
+	feeds, err := s.db.GetFeeds(ctx)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to retrieve feeds from db: %v", err)
+		return errMsg
+	}
+
+	for _, feed := range feeds {
+		fmt.Println(feed)
+	}
+
+	return nil
+}
+
 func InitCmds() (commands, error) {
 	cmds := NewCommands()
 	cmds.register("reset", handlerReset)
@@ -248,7 +264,8 @@ func InitCmds() (commands, error) {
 	cmds.register("register", handlerRegister)
 	cmds.register("users", handlerUsers)
 	cmds.register("agg", handlerAgg)
-	cmds.register("addfeed", handleAddFeed)
+	cmds.register("addfeed", handlerAddFeed)
+	cmds.register("feeds", handlerFeeds)
 	return *cmds, nil
 }
 
