@@ -11,6 +11,7 @@ import (
 
 	"github.com/g-lok/bootdev-gatorblogs/internal/config"
 	"github.com/g-lok/bootdev-gatorblogs/internal/database"
+	"github.com/g-lok/bootdev-gatorblogs/internal/rss"
 	"github.com/google/uuid"
 )
 
@@ -184,12 +185,70 @@ func handlerUsers(s *State, cmd Command) error {
 	return nil
 }
 
+func handlerAgg(s *State, cmd Command) error {
+	ctx := context.Background()
+	tmpURL := "https://www.wagslane.dev/index.xml"
+	feed, err := rss.FetchFeed(ctx, tmpURL)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to fetch RSS feed: %v", err)
+		return errMsg
+	}
+	fmt.Println(feed)
+	return nil
+}
+
+func handleAddFeed(s *State, cmd Command) error {
+	ctx := context.Background()
+
+	if len(cmd.args) != 2 {
+		errMsg := errors.New("addfeed requires name, url arguments")
+		return errMsg
+	}
+
+	cfg, err := getConfig()
+	if err != nil {
+		errMsg := fmt.Errorf("failed to get ~/.gatorconfig: %v", err)
+		return errMsg
+	}
+
+	currUser, err := s.db.GetUserName(ctx, cfg.UserName)
+	if err != nil {
+		errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
+		return errMsg
+	}
+
+	timeNow := sql.NullTime{
+		Time:  time.Now(),
+		Valid: true,
+	}
+
+	var feedParams database.AddFeedParams
+	feedParams.ID = uuid.New()
+	feedParams.CreatedAt = timeNow
+	feedParams.UpdatedAt = timeNow
+	feedParams.UserID = currUser.ID
+	feedParams.Name = cmd.args[0]
+	feedParams.Url = cmd.args[1]
+
+	feed, err := s.db.AddFeed(ctx, feedParams)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to create new feed %s: %v", cmd.args[0], err)
+		return errMsg
+	}
+
+	fmt.Println(feed)
+
+	return nil
+}
+
 func InitCmds() (commands, error) {
 	cmds := NewCommands()
 	cmds.register("reset", handlerReset)
 	cmds.register("login", handlerLogin)
 	cmds.register("register", handlerRegister)
 	cmds.register("users", handlerUsers)
+	cmds.register("agg", handlerAgg)
+	cmds.register("addfeed", handleAddFeed)
 	return *cmds, nil
 }
 
