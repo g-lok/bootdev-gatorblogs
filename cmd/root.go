@@ -11,7 +11,6 @@ import (
 
 	"github.com/g-lok/bootdev-gatorblogs/internal/config"
 	"github.com/g-lok/bootdev-gatorblogs/internal/database"
-	"github.com/g-lok/bootdev-gatorblogs/internal/rss"
 	"github.com/google/uuid"
 )
 
@@ -64,6 +63,17 @@ func getConfig() (config.Config, error) {
 	return *currentCfg, nil
 }
 
+func middlewareLoggedIn(handler func(s *State, cmd Command, user database.User) error) func(*State, Command) error {
+	return func(s *State, cmd Command) error {
+		// lookup happens here, at command execution time
+		user, err := s.db.GetUserName(context.Background(), s.cfg.UserName)
+		if err != nil {
+			return err
+		}
+		return handler(s, cmd, user)
+	}
+}
+
 func handlerReset(s *State, cmd Command) error {
 	ctx := context.Background()
 	err := s.db.ResetUsers(ctx)
@@ -82,12 +92,6 @@ func handlerLogin(s *State, cmd Command) error {
 		return errMsg
 	}
 
-	cfg, err := getConfig()
-	if err != nil {
-		errMsg := fmt.Errorf("failed to get ~/.gatorconfig: %v", err)
-		return errMsg
-	}
-
 	ctx := context.Background()
 	usrExists, err := s.db.UserExists(ctx, cmd.args[0])
 	if err != nil {
@@ -99,7 +103,7 @@ func handlerLogin(s *State, cmd Command) error {
 		errMsg := fmt.Errorf("user %s does not exist in database", cmd.args[0])
 		return errMsg
 	}
-	err = cfg.SetUser(cmd.args[0])
+	err = s.cfg.SetUser(cmd.args[0])
 	if err != nil {
 		errMsg := errors.New("login cmd requires 1 username argument")
 		return errMsg
@@ -143,12 +147,7 @@ func handlerRegister(s *State, cmd Command) error {
 		return errMsg
 	}
 
-	cfg, err := getConfig()
-	if err != nil {
-		errMsg := fmt.Errorf("failed to load config: %w", err)
-		return errMsg
-	}
-	err = cfg.SetUser(cmd.args[0])
+	err = s.cfg.SetUser(cmd.args[0])
 	if err != nil {
 		errMsg := fmt.Errorf("failed to set user %s: %v", cmd.args[0], err)
 		return errMsg
@@ -168,36 +167,30 @@ func handlerUsers(s *State, cmd Command) error {
 		return errMsg
 	}
 
-	cfg, err := getConfig()
-	if err != nil {
-		errMsg := fmt.Errorf("failed to get ~/.gatorconfig: %v", err)
-		return errMsg
-	}
-
 	for _, user := range users {
-		s := fmt.Sprintf("- %s", user)
-		if cfg.UserName == user {
-			s += " (current)"
+		uStr := fmt.Sprintf("- %s", user)
+		if s.cfg.UserName == user {
+			uStr += " (current)"
 		}
-		fmt.Println(s)
+		fmt.Println(uStr)
 	}
 
 	return nil
 }
 
-func handlerAgg(s *State, cmd Command) error {
-	ctx := context.Background()
-	tmpURL := "https://www.wagslane.dev/index.xml"
-	feed, err := rss.FetchFeed(ctx, tmpURL)
-	if err != nil {
-		errMsg := fmt.Errorf("failed to fetch RSS feed: %v", err)
-		return errMsg
-	}
-	fmt.Println(feed)
-	return nil
-}
+// func handlerAgg(s *State, cmd Command) error {
+// 	ctx := context.Background()
+// 	tmpURL := "https://www.wagslane.dev/index.xml"
+// 	feed, err := rss.FetchFeed(ctx, tmpURL)
+// 	if err != nil {
+// 		errMsg := fmt.Errorf("failed to fetch RSS feed: %v", err)
+// 		return errMsg
+// 	}
+// 	fmt.Println(feed)
+// 	return nil
+// }
 
-func handlerAddFeed(s *State, cmd Command) error {
+func handlerAddFeed(s *State, cmd Command, user database.User) error {
 	ctx := context.Background()
 
 	if len(cmd.args) != 2 {
@@ -205,17 +198,11 @@ func handlerAddFeed(s *State, cmd Command) error {
 		return errMsg
 	}
 
-	cfg, err := getConfig()
-	if err != nil {
-		errMsg := fmt.Errorf("failed to get ~/.gatorconfig: %v", err)
-		return errMsg
-	}
-
-	currUser, err := s.db.GetUserName(ctx, cfg.UserName)
-	if err != nil {
-		errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
-		return errMsg
-	}
+	// currUser, err := s.db.GetUserName(ctx, s.cfg.UserName)
+	// if err != nil {
+	// 	errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
+	// 	return errMsg
+	// }
 
 	timeNow := sql.NullTime{
 		Time:  time.Now(),
@@ -226,7 +213,7 @@ func handlerAddFeed(s *State, cmd Command) error {
 	feedParams.ID = uuid.New()
 	feedParams.CreatedAt = timeNow
 	feedParams.UpdatedAt = timeNow
-	feedParams.UserID = currUser.ID
+	feedParams.UserID = user.ID
 	feedParams.Name = cmd.args[0]
 	feedParams.Url = cmd.args[1]
 
@@ -243,7 +230,7 @@ func handlerAddFeed(s *State, cmd Command) error {
 	followArgs[0] = cmd.args[1]
 	followCmd.name = "follow"
 	followCmd.args = followArgs
-	err = handlerFollow(s, followCmd)
+	err = middlewareLoggedIn(handlerFollow)(s, followCmd)
 	if err != nil {
 		return err
 	}
@@ -267,27 +254,21 @@ func handlerFeeds(s *State, cmd Command) error {
 	return nil
 }
 
-func handlerFollow(s *State, cmd Command) error {
+func handlerFollow(s *State, cmd Command, user database.User) error {
 	if len(cmd.args) != 1 {
 		errMsg := errors.New("follow cmd requires 1 url")
 		return errMsg
 	}
 
-	cfg, err := getConfig()
-	if err != nil {
-		errMsg := fmt.Errorf("failed to get ~/.gatorconfig: %v", err)
-		return errMsg
-	}
-
 	ctx := context.Background()
-	currUser, err := s.db.GetUserName(ctx, cfg.UserName)
+	// currUser, err := s.db.GetUserName(ctx, s.cfg.UserName)
+	// if err != nil {
+	// 	errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
+	// 	return errMsg
+	// }
+	usrFeeds, err := s.db.GetFeedFollowsForUser(ctx, user.ID)
 	if err != nil {
-		errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
-		return errMsg
-	}
-	usrFeeds, err := s.db.GetFeedFollowsForUser(ctx, currUser.ID)
-	if err != nil {
-		errMsg := fmt.Errorf("failed to get user %s's feeds: %v", cfg.UserName)
+		errMsg := fmt.Errorf("failed to get user %s's feeds: %v", s.cfg.UserName)
 		return errMsg
 	}
 
@@ -309,7 +290,7 @@ func handlerFollow(s *State, cmd Command) error {
 
 	for _, feed := range usrFeeds {
 		if feed.FeedID == feedRow.ID {
-			errMsg := fmt.Errorf("user %s already following feed %s", cfg.UserName, cmd.args[0])
+			errMsg := fmt.Errorf("user %s already following feed %s", user.Name, cmd.args[0])
 			return errMsg
 		}
 	}
@@ -323,7 +304,7 @@ func handlerFollow(s *State, cmd Command) error {
 	feedFollowParams.ID = uuid.New()
 	feedFollowParams.CreatedAt = timeNow
 	feedFollowParams.UpdatedAt = timeNow
-	feedFollowParams.UserID = currUser.ID
+	feedFollowParams.UserID = user.ID
 	feedFollowParams.FeedID = feedRow.ID
 
 	feedFollow, err := s.db.CreateFeedFollow(ctx, feedFollowParams)
@@ -337,22 +318,17 @@ func handlerFollow(s *State, cmd Command) error {
 	return nil
 }
 
-func handlerFollowing(s *State, cmd Command) error {
-	cfg, err := getConfig()
-	if err != nil {
-		errMsg := fmt.Errorf("failed to get ~/.gatorconfig: %v", err)
-		return errMsg
-	}
+func handlerFollowing(s *State, cmd Command, user database.User) error {
 	ctx := context.Background()
 
-	currUser, err := s.db.GetUserName(ctx, cfg.UserName)
+	// currUser, err := s.db.GetUserName(ctx, cfg.UserName)
+	// if err != nil {
+	// 	errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
+	// 	return errMsg
+	// }
+	usrFeeds, err := s.db.GetFeedFollowsForUser(ctx, user.ID)
 	if err != nil {
-		errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
-		return errMsg
-	}
-	usrFeeds, err := s.db.GetFeedFollowsForUser(ctx, currUser.ID)
-	if err != nil {
-		errMsg := fmt.Errorf("failed to get user %s's feeds: %v", cfg.UserName)
+		errMsg := fmt.Errorf("failed to get user %s's feeds: %v", user.Name)
 		return errMsg
 	}
 
@@ -370,11 +346,11 @@ func InitCmds() (commands, error) {
 	cmds.register("login", handlerLogin)
 	cmds.register("register", handlerRegister)
 	cmds.register("users", handlerUsers)
-	cmds.register("agg", handlerAgg)
-	cmds.register("addfeed", handlerAddFeed)
+	// cmds.register("agg", handlerAgg)
+	cmds.register("addfeed", middlewareLoggedIn(handlerAddFeed))
 	cmds.register("feeds", handlerFeeds)
-	cmds.register("follow", handlerFollow)
-	cmds.register("following", handlerFollowing)
+	cmds.register("follow", middlewareLoggedIn(handlerFollow))
+	cmds.register("following", middlewareLoggedIn(handlerFollowing))
 	return *cmds, nil
 }
 
