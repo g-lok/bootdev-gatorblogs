@@ -238,6 +238,16 @@ func handlerAddFeed(s *State, cmd Command) error {
 
 	fmt.Println(feed)
 
+	var followCmd Command
+	followArgs := make([]string, 1)
+	followArgs[0] = cmd.args[1]
+	followCmd.name = "follow"
+	followCmd.args = followArgs
+	err = handlerFollow(s, followCmd)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -257,6 +267,103 @@ func handlerFeeds(s *State, cmd Command) error {
 	return nil
 }
 
+func handlerFollow(s *State, cmd Command) error {
+	if len(cmd.args) != 1 {
+		errMsg := errors.New("follow cmd requires 1 url")
+		return errMsg
+	}
+
+	cfg, err := getConfig()
+	if err != nil {
+		errMsg := fmt.Errorf("failed to get ~/.gatorconfig: %v", err)
+		return errMsg
+	}
+
+	ctx := context.Background()
+	currUser, err := s.db.GetUserName(ctx, cfg.UserName)
+	if err != nil {
+		errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
+		return errMsg
+	}
+	usrFeeds, err := s.db.GetFeedFollowsForUser(ctx, currUser.ID)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to get user %s's feeds: %v", cfg.UserName)
+		return errMsg
+	}
+
+	feedExists, err := s.db.FeedExists(ctx, cmd.args[0])
+	if err != nil {
+		errMsg := fmt.Errorf("failed to check if feed %s exists: %v", cmd.args[0], err)
+		return errMsg
+	}
+	if !feedExists {
+		errMsg := fmt.Errorf("feed %s doesn't exists in database", cmd.args[0])
+		return errMsg
+	}
+
+	feedRow, err := s.db.GetFeedByURL(ctx, cmd.args[0])
+	if err != nil {
+		errMsg := fmt.Errorf("failed to get feed %s: %v", cmd.args[0], err)
+		return errMsg
+	}
+
+	for _, feed := range usrFeeds {
+		if feed.FeedID == feedRow.ID {
+			errMsg := fmt.Errorf("user %s already following feed %s", cfg.UserName, cmd.args[0])
+			return errMsg
+		}
+	}
+
+	timeNow := sql.NullTime{
+		Time:  time.Now(),
+		Valid: true,
+	}
+
+	var feedFollowParams database.CreateFeedFollowParams
+	feedFollowParams.ID = uuid.New()
+	feedFollowParams.CreatedAt = timeNow
+	feedFollowParams.UpdatedAt = timeNow
+	feedFollowParams.UserID = currUser.ID
+	feedFollowParams.FeedID = feedRow.ID
+
+	feedFollow, err := s.db.CreateFeedFollow(ctx, feedFollowParams)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to follow feed %s: %v", cmd.args[0], err)
+		return errMsg
+	}
+	successMsg := fmt.Sprintf("user %s following feed: %s", feedFollow.UserName, feedFollow.FeedName)
+	fmt.Println(successMsg)
+
+	return nil
+}
+
+func handlerFollowing(s *State, cmd Command) error {
+	cfg, err := getConfig()
+	if err != nil {
+		errMsg := fmt.Errorf("failed to get ~/.gatorconfig: %v", err)
+		return errMsg
+	}
+	ctx := context.Background()
+
+	currUser, err := s.db.GetUserName(ctx, cfg.UserName)
+	if err != nil {
+		errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
+		return errMsg
+	}
+	usrFeeds, err := s.db.GetFeedFollowsForUser(ctx, currUser.ID)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to get user %s's feeds: %v", cfg.UserName)
+		return errMsg
+	}
+
+	for _, feed := range usrFeeds {
+		msg := fmt.Sprintf("feed: %s", feed.FeedName)
+		fmt.Println(msg)
+	}
+
+	return nil
+}
+
 func InitCmds() (commands, error) {
 	cmds := NewCommands()
 	cmds.register("reset", handlerReset)
@@ -266,6 +373,8 @@ func InitCmds() (commands, error) {
 	cmds.register("agg", handlerAgg)
 	cmds.register("addfeed", handlerAddFeed)
 	cmds.register("feeds", handlerFeeds)
+	cmds.register("follow", handlerFollow)
+	cmds.register("following", handlerFollowing)
 	return *cmds, nil
 }
 
