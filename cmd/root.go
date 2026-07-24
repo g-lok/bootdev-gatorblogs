@@ -11,6 +11,7 @@ import (
 
 	"github.com/g-lok/bootdev-gatorblogs/internal/config"
 	"github.com/g-lok/bootdev-gatorblogs/internal/database"
+	"github.com/g-lok/bootdev-gatorblogs/internal/rss"
 	"github.com/google/uuid"
 )
 
@@ -178,17 +179,25 @@ func handlerUsers(s *State, cmd Command) error {
 	return nil
 }
 
-// func handlerAgg(s *State, cmd Command) error {
-// 	ctx := context.Background()
-// 	tmpURL := "https://www.wagslane.dev/index.xml"
-// 	feed, err := rss.FetchFeed(ctx, tmpURL)
-// 	if err != nil {
-// 		errMsg := fmt.Errorf("failed to fetch RSS feed: %v", err)
-// 		return errMsg
-// 	}
-// 	fmt.Println(feed)
-// 	return nil
-// }
+func handlerAgg(s *State, cmd Command) error {
+	if len(cmd.args) != 1 {
+		errMsg := errors.New("agg requires one arg: time between requests")
+		return errMsg
+	}
+	duration, err := time.ParseDuration(cmd.args[0])
+	if err != nil {
+		return errors.New("time between durations argument must be legitimate format: 1s, 1m, 1h, etc")
+	}
+	ticker := time.NewTicker(duration)
+
+	for ; ; <-ticker.C {
+		err = scrapeFeeds(s)
+		if err != nil {
+			errMsg := fmt.Errorf("failed to fetch feed: %v", err)
+			return errMsg
+		}
+	}
+}
 
 func handlerAddFeed(s *State, cmd Command, user database.User) error {
 	ctx := context.Background()
@@ -197,12 +206,6 @@ func handlerAddFeed(s *State, cmd Command, user database.User) error {
 		errMsg := errors.New("addfeed requires name, url arguments")
 		return errMsg
 	}
-
-	// currUser, err := s.db.GetUserName(ctx, s.cfg.UserName)
-	// if err != nil {
-	// 	errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
-	// 	return errMsg
-	// }
 
 	timeNow := sql.NullTime{
 		Time:  time.Now(),
@@ -261,11 +264,6 @@ func handlerFollow(s *State, cmd Command, user database.User) error {
 	}
 
 	ctx := context.Background()
-	// currUser, err := s.db.GetUserName(ctx, s.cfg.UserName)
-	// if err != nil {
-	// 	errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
-	// 	return errMsg
-	// }
 	usrFeeds, err := s.db.GetFeedFollowsForUser(ctx, user.ID)
 	if err != nil {
 		errMsg := fmt.Errorf("failed to get user %s's feeds: %v", s.cfg.UserName)
@@ -321,11 +319,6 @@ func handlerFollow(s *State, cmd Command, user database.User) error {
 func handlerFollowing(s *State, cmd Command, user database.User) error {
 	ctx := context.Background()
 
-	// currUser, err := s.db.GetUserName(ctx, cfg.UserName)
-	// if err != nil {
-	// 	errMsg := fmt.Errorf("couldn't fetch currUser from db: %v", err)
-	// 	return errMsg
-	// }
 	usrFeeds, err := s.db.GetFeedFollowsForUser(ctx, user.ID)
 	if err != nil {
 		errMsg := fmt.Errorf("failed to get user %s's feeds: %v", user.Name)
@@ -358,13 +351,35 @@ func handlerUnfollow(s *State, cmd Command, user database.User) error {
 	return nil
 }
 
+func scrapeFeeds(s *State) error {
+	ctx := context.Background()
+	nextFeed, err := s.db.GetNextFeedToFetch(ctx)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to fetch next feed: %v", err)
+		return errMsg
+	}
+
+	s.db.MarkFeedFetched(ctx, nextFeed.ID)
+	feed, err := rss.FetchFeed(ctx, nextFeed.Url)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to fetch feed %s: %v", nextFeed.Url, err)
+		return errMsg
+	}
+
+	for _, item := range feed.Channel.Item {
+		fmt.Println(item.Title)
+	}
+
+	return nil
+}
+
 func InitCmds() (commands, error) {
 	cmds := NewCommands()
 	cmds.register("reset", handlerReset)
 	cmds.register("login", handlerLogin)
 	cmds.register("register", handlerRegister)
 	cmds.register("users", handlerUsers)
-	// cmds.register("agg", handlerAgg)
+	cmds.register("agg", handlerAgg)
 	cmds.register("addfeed", middlewareLoggedIn(handlerAddFeed))
 	cmds.register("feeds", handlerFeeds)
 	cmds.register("follow", middlewareLoggedIn(handlerFollow))
