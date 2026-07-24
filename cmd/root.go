@@ -340,6 +340,24 @@ func handlerFollowing(s *State, cmd Command, user database.User) error {
 	return nil
 }
 
+func handlerUnfollow(s *State, cmd Command, user database.User) error {
+	if len(cmd.args) != 1 {
+		errMsg := errors.New("unfollow requires 1 url argument")
+		return errMsg
+	}
+
+	ctx := context.Background()
+	var unfollowParams database.DeleteFeedFollowParams
+	unfollowParams.UserID = user.ID
+	unfollowParams.Url = cmd.args[0]
+	err := s.db.DeleteFeedFollow(ctx, unfollowParams)
+	if err != nil {
+		errMsg := fmt.Errorf("failed to unfollow %s for user %s: %v", cmd.args[0], user.Name, err)
+		return errMsg
+	}
+	return nil
+}
+
 func InitCmds() (commands, error) {
 	cmds := NewCommands()
 	cmds.register("reset", handlerReset)
@@ -351,6 +369,7 @@ func InitCmds() (commands, error) {
 	cmds.register("feeds", handlerFeeds)
 	cmds.register("follow", middlewareLoggedIn(handlerFollow))
 	cmds.register("following", middlewareLoggedIn(handlerFollowing))
+	cmds.register("unfollow", middlewareLoggedIn(handlerUnfollow))
 	return *cmds, nil
 }
 
